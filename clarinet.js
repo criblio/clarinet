@@ -24,6 +24,7 @@
     , "error"
     , "end"
     , "ready"
+    , "onobjstartpos"
     ];
 
   var buffers     = {
@@ -94,7 +95,7 @@
 
     a                   : 0x61,     // a
     b                   : 0x62,     // b
-    e                   : 0x65,     // e 
+    e                   : 0x65,     // e
     f                   : 0x66,     // f
     l                   : 0x6C,     // l
     n                   : 0x6E,     // n
@@ -409,7 +410,10 @@
       switch (parser.state) {
 
         case S.BEGIN:
-          if (c === Char.openBrace) parser.state = S.OPEN_OBJECT;
+          if (c === Char.openBrace) {
+            parser.state = S.OPEN_OBJECT;
+            emit(parser, 'onobjstartpos', i);
+          }
           else if (c === Char.openBracket) parser.state = S.OPEN_ARRAY;
           else if (!isWhitespace(c))
             error(parser, "Non-whitespace before {[.");
@@ -473,7 +477,10 @@
             }
           }
                if(c === Char.doubleQuote) parser.state = S.STRING;
-          else if(c === Char.openBrace) parser.state = S.OPEN_OBJECT;
+          else if(c === Char.openBrace) {
+            parser.state =  S.OPEN_OBJECT;
+            emit(parser, 'onobjstartpos', i);
+          }
           else if(c === Char.openBracket) parser.state = S.OPEN_ARRAY;
           else if(c === Char.t) parser.state = S.TRUE;
           else if(c === Char.f) parser.state = S.FALSE;

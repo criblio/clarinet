@@ -77,10 +77,10 @@ var seps   = [undefined, /\t|\n|\r/, '']
         ]
       }
     , four_byte_utf8 :
-      { text          : '{ "U+10ABCD": "í¯ªí¿" }'
+      { text          : '{ "U+10ABCD": "ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½" }'
       , events        :
         [ ["openobject"  , "U+10ABCD"]
-        , ["value"       , "í¯ªí¿"]
+        , ["value"       , "ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½"]
         , ["closeobject" , undefined]
         , ['end'         , undefined]
         , ['ready'       , undefined]
@@ -782,9 +782,14 @@ function generic(key, prechunked, sep) {
           if(!(current && current[0])) { return; }
           assert(current[0] === event, 
             '[ln' + i + '] event: [' + current[0] + '] got: [' + event +']');
-          if(event!== 'error')
+          if(event === 'closearray' || event === 'closeobject') {
+            // Closing container events carry the position in the current chunk.
+            assert(typeof value === 'number',
+              '[ln' + i + '] position: [' + value +']');
+          } else if(event !== 'error') {
             assert(current[1] === value, 
               '[ln' + i + '] value: [' + current[1] + '] got: [' + value +']');
+          }
         }
       };
     });

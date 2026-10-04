@@ -28,10 +28,19 @@
     , "onarrstartpos"
     ];
 
+  // the marker inserted in the middle when a string is truncated
+  clarinet.TRUNCATE_MARKER = "...TRUNCATED...";
+
   var buffers     = {
         textNode: undefined,
-        numberNode: ""
+        numberNode: "",
+        // truncation bookkeeping (reset through clearBuffers)
+        truncated: false,       // is the current textNode truncated?
+        truncatedChars: 0,      // how many chars were dropped so far
+        truncateHeadLen: 0,     // preserved head length (before the marker)
+        truncateTailLen: 0      // preserved tail length (after the marker)
     }
+    , bufferNames = ["textNode", "numberNode"]
     , streamWraps = clarinet.EVENTS.filter(function (ev) {
           return ev !== "error" && ev !== "end";
         })
@@ -135,10 +144,18 @@
     var maxAllowed = Math.max(clarinet.MAX_BUFFER_LENGTH, 10)
       , maxActual = 0
       ;
-    for (var buffer in buffers) {
-      var len = parser[buffer] === undefined ? 0 : parser[buffer].length;
+    for (var bufferIdx in bufferNames) {
+      var buffer = bufferNames[bufferIdx]
+        , len = parser[buffer] === undefined ? 0 : parser[buffer].length
+        ;
       if (len > maxAllowed) {
-        error(parser, "Max buffer length exceeded: "+ buffer);
+        if (buffer === 'textNode' && truncateTextNode(parser)) {
+          // the truncation option is enabled, so the string was truncated
+          // down to the maximum size instead of raising an error
+          len = parser.textNode === undefined ? 0 : parser.textNode.length;
+        } else {
+          error(parser, "Max buffer length exceeded: "+ buffer);
+        }
       }
       maxActual = Math.max(maxActual, len);
     }
@@ -317,7 +334,9 @@
 
   function emit(parser, event, data) {
     if(clarinet.INFO) console.log('-- emit', event, data);
-    if (parser[event]) parser[event](data);
+    if (parser[event]) {
+      parser[event].apply(parser, Array.prototype.slice.call(arguments, 2));
+    }
   }
 
   function emitNode(parser, event, data) {
@@ -326,11 +345,33 @@
   }
 
   function closeValue(parser, event) {
+    var truncated = false
+      , originalLength = 0
+      , markerLen = (parser.opt.truncateMarker || clarinet.TRUNCATE_MARKER)
+                    .length
+      ;
+    truncateTextNode(parser);
+    if (parser.textNode !== undefined) {
+      if (parser.truncated) {
+        truncated = true;
+        // textNode is head + marker + tail, so the original length is the
+        // current length minus the marker plus everything that was dropped
+        originalLength = parser.textNode.length - markerLen
+                       + parser.truncatedChars;
+      } else {
+        originalLength = parser.textNode.length;
+      }
+    }
     parser.textNode = textopts(parser.opt, parser.textNode);
     if (parser.textNode !== undefined) {
-      emit(parser, (event ? event : "onvalue"), parser.textNode);
+      emit(parser, (event ? event : "onvalue"), parser.textNode
+         , truncated, originalLength);
     }
     parser.textNode = undefined;
+    parser.truncated = false;
+    parser.truncatedChars = 0;
+    parser.truncateHeadLen = 0;
+    parser.truncateTailLen = 0;
   }
 
   function closeNumber(parser) {
@@ -346,6 +387,60 @@
     if (opt.trim) text = text.trim();
     if (opt.normalize) text = text.replace(/\s+/g, " ");
     return text;
+  }
+
+  // the maximum string length when the truncate option is enabled.
+  // returns 0 (falsy) when the option is not enabled.
+  function truncateMax (opt) {
+    if (!opt.truncate) return 0;
+    if (opt.truncate === true) return Math.max(clarinet.MAX_BUFFER_LENGTH, 10);
+    return opt.truncate;
+  }
+
+  // Truncates the middle of the current textNode once it reaches the
+  // maximum size, preserving both its beginning and its ending, e.g.
+  //   "somelong...TRUNCATED...string"
+  // When a string is truncated across multiple writes the head stays
+  // fixed while the tail keeps sliding forward; every dropped character
+  // is accounted for in parser.truncatedChars so that the original length
+  // can still be reported when the value is emitted.
+  // Returns true when the truncation option is enabled for this parser
+  // (meaning the textNode buffer is managed and must not raise a
+  // "Max buffer length exceeded" error).
+  function truncateTextNode (parser) {
+    var max = truncateMax(parser.opt);
+    if (!max || parser.textNode === undefined) return false;
+
+    var marker   = parser.opt.truncateMarker || clarinet.TRUNCATE_MARKER
+      , markerLen = marker.length
+      , available = Math.max(max - markerLen, 2)
+      ;
+
+    if (parser.truncated) {
+      // textNode is currently head + marker + tail (+ text appended since
+      // the last truncation). Trim the middle again if it grew too much.
+      if (parser.textNode.length <= max) return true;
+      var rest = parser.textNode.substring(parser.truncateHeadLen + markerLen);
+      parser.truncatedChars += rest.length - parser.truncateTailLen;
+      parser.textNode = parser.textNode.substring(0, parser.truncateHeadLen)
+                      + marker
+                      + rest.substring(rest.length - parser.truncateTailLen);
+      return true;
+    }
+
+    if (parser.textNode.length <= max) return true;
+
+    var headLen = available - (available >> 1)
+      , tailLen = available >> 1
+      , text = parser.textNode
+      ;
+    parser.truncateHeadLen = headLen;
+    parser.truncateTailLen = tailLen;
+    parser.truncatedChars = text.length - headLen - tailLen;
+    parser.textNode = text.substring(0, headLen) + marker
+                    + text.substring(text.length - tailLen);
+    parser.truncated = true;
+    return true;
   }
 
   function error (parser, er) {

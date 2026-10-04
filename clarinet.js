@@ -138,14 +138,7 @@
     for (var buffer in buffers) {
       var len = parser[buffer] === undefined ? 0 : parser[buffer].length;
       if (len > maxAllowed) {
-        switch (buffer) {
-          case "text":
-            closeText(parser);
-          break;
-
-          default:
-            error(parser, "Max buffer length exceeded: "+ buffer);
-        }
+        error(parser, "Max buffer length exceeded: "+ buffer);
       }
       maxActual = Math.max(maxActual, len);
     }

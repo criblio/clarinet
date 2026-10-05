@@ -28,9 +28,6 @@
     , "onarrstartpos"
     ];
 
-  // the marker inserted in the middle when a string is truncated
-  clarinet.TRUNCATE_MARKER = "...TRUNCATED...";
-
   var buffers     = {
         textNode: undefined,
         numberNode: "",
@@ -343,10 +340,14 @@
     emit(parser, event, data);
   }
 
+  function getTruncateMarker(parser){
+    return `...[TRUNCATED=${parser.truncatedChars}]...`
+  }
+
   function closeValue(parser, event) {
     var truncated = false
       , originalLength = 0
-      , markerLen = (parser.opt.truncateMarker || clarinet.TRUNCATE_MARKER)
+      , markerLen = (parser.opt.truncateMarker || getTruncateMarker(parser))
                     .length
       ;
     truncateTextNode(parser);
@@ -394,7 +395,7 @@
 
   // Truncates the middle of the current textNode once it reaches the
   // maximum size, preserving both its beginning and its ending, e.g.
-  //   "somelong...TRUNCATED...string"
+  //   "somelong...TRUNC[<remove-chars>]...string"
   // When a string is truncated across multiple writes the head stays
   // fixed while the tail keeps sliding forward; every dropped character
   // is accounted for in parser.truncatedChars so that the original length
@@ -406,10 +407,20 @@
     var max = truncateMax(parser.opt);
     if (!max || parser.textNode === undefined) return false;
 
-    var marker   = parser.opt.truncateMarker || clarinet.TRUNCATE_MARKER
+    var marker   = parser.opt.truncateMarker || getTruncateMarker(parser)
       , markerLen = marker.length
       , available = Math.max(max - markerLen, 2)
       ;
+    
+    function updateTextNode() {
+      marker = parser.opt.truncateMarker || getTruncateMarker(parser);
+      var text = parser.textNode;
+      parser.textNode = text.substring(0, parser.truncateHeadLen)
+                      + marker
+                      + text.substring(text.length - parser.truncateTailLen);
+      parser.truncated = true;
+      return true;
+    }
 
     if (parser.truncated) {
       // textNode is currently head + marker + tail (+ text appended since
@@ -417,10 +428,7 @@
       if (parser.textNode.length <= max) return true;
       var rest = parser.textNode.substring(parser.truncateHeadLen + markerLen);
       parser.truncatedChars += rest.length - parser.truncateTailLen;
-      parser.textNode = parser.textNode.substring(0, parser.truncateHeadLen)
-                      + marker
-                      + rest.substring(rest.length - parser.truncateTailLen);
-      return true;
+      return updateTextNode();
     }
 
     if (parser.textNode.length <= max) return true;
@@ -432,10 +440,7 @@
     parser.truncateHeadLen = headLen;
     parser.truncateTailLen = tailLen;
     parser.truncatedChars = text.length - headLen - tailLen;
-    parser.textNode = text.substring(0, headLen) + marker
-                    + text.substring(text.length - tailLen);
-    parser.truncated = true;
-    return true;
+    return updateTextNode();
   }
 
   function error (parser, er) {

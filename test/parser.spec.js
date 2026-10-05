@@ -180,7 +180,6 @@ describe("object literal", () => {
 });
 
 describe("truncate option", () => {
-  const MARKER = clarinet.TRUNCATE_MARKER; // "...TRUNCATED..."
 
   const parseValues = (opt, json, chunkSize) => {
     const p = parser(opt);
@@ -214,10 +213,10 @@ describe("truncate option", () => {
     const [{ value, truncated, originalLength }] =
       parseValues({ truncate: 50 }, JSON.stringify([str]));
     assert.strictEqual(truncated, true);
-    assert.strictEqual(originalLength, 120);
-    assert.strictEqual(value, str.substring(0, 18) + MARKER
-      + str.substring(103));
-    assert.strictEqual(value.length, 50);
+    assert.strictEqual(originalLength, 121);
+    assert.strictEqual(value, str.substring(0, 16) + '...[TRUNCATED=89]...'
+      + str.substring(105));
+    assert.strictEqual(value.length, 51);
   });
 
   it("truncates streamed strings once they reach the maximum buffer length", () => {
@@ -230,9 +229,9 @@ describe("truncate option", () => {
         parseValues({ truncate: true }, JSON.stringify([str]), 13);
       assert.strictEqual(truncated, true);
       assert.strictEqual(originalLength, 1000);
-      assert.strictEqual(value, str.substring(0, 43) + MARKER
-        + str.substring(1000 - 42));
-      assert.strictEqual(value.length, 100);
+      assert.strictEqual(value, str.substring(0, 41) + `...[TRUNCATED=919]...`
+        + str.substring(1000 - 40));
+      assert.strictEqual(value.length, 102);
     } finally {
       clarinet.MAX_BUFFER_LENGTH = originalMax;
     }
@@ -269,7 +268,7 @@ describe("truncate option", () => {
     assert.deepStrictEqual(values.map((v) => v.truncated),
       [true, false, true]);
     assert.deepStrictEqual(values.map((v) => v.originalLength),
-      [120, 5, 200]);
+      [121, 5, 202]);
     assert.strictEqual(values[1].value, "short");
   });
 

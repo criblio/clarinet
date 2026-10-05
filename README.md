@@ -110,10 +110,10 @@ settings supported:
   (by default `clarinet.MAX_BUFFER_LENGTH`, 64kb), truncate it in the
   middle instead of raising a `Max buffer length exceeded` error. the
   beginning and the ending of the string are preserved and joined by a
-  marker, e.g. `"somelong...TRUNCATED...string"`. pass a number to use a
+  marker, e.g. `"somelong...[TRUNCATED=<num-chars>]...string"`. pass a number to use a
   maximum size other than `clarinet.MAX_BUFFER_LENGTH`.
 * `truncateMarker` - string. the marker placed in the middle of truncated
-  strings. defaults to `...TRUNCATED...`.
+  strings. defaults to `...[TRUNCATED=<num-chars>]...`.
 
 when the `truncate` option is enabled, string values (and keys) are emitted
 with two extra arguments: a boolean indicating whether the value was

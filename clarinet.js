@@ -366,11 +366,7 @@
       emit(parser, (event ? event : "onvalue"), parser.textNode
          , truncated, originalLength);
     }
-    parser.textNode = undefined;
-    parser.truncated = false;
-    parser.truncatedChars = 0;
-    parser.truncateHeadLen = 0;
-    parser.truncateTailLen = 0;
+    clearBuffers(parser);
   }
 
   function closeNumber(parser) {

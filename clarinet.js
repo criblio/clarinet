@@ -332,11 +332,10 @@
     this.emit("close");
   };
 
-  function emit(parser, event, data) {
+  function emit(parser, event, data, ...args) {
     if(clarinet.INFO) console.log('-- emit', event, data);
-    if (parser[event]) {
-      parser[event].apply(parser, Array.prototype.slice.call(arguments, 2));
-    }
+    // make sure to pass all the extra args passed in
+    parser[event]?.apply(parser, [data, ...args]);
   }
 
   function emitNode(parser, event, data) {

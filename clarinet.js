@@ -31,11 +31,6 @@
   var buffers     = {
         textNode: undefined,
         numberNode: "",
-        // truncation bookkeeping (reset through clearBuffers)
-        truncated: false,       // is the current textNode truncated?
-        truncatedChars: 0,      // how many chars were dropped so far
-        truncateHeadLen: 0,     // preserved head length (before the marker)
-        truncateTailLen: 0      // preserved tail length (after the marker)
     }
     , bufferNames = ["textNode", "numberNode"]
     , streamWraps = clarinet.EVENTS.filter(function (ev) {
@@ -192,6 +187,8 @@
     parser.unicodeI = 0;
     parser.unicodeS = null;
     parser.depth    = 0;
+    parser.truncated = false;       // is the current textNode truncated?
+    parser.truncatedChars = 0;      // how many chars were dropped so far
     emit(parser, "onready");
   }
 
@@ -334,10 +331,10 @@
     this.emit("close");
   };
 
-  function emit(parser, event, data, ...args) {
+  function emit(parser, event, ...args) {
     if(clarinet.INFO) console.log('-- emit', event, data);
     // make sure to pass all the extra args passed in
-    parser[event]?.apply(parser, [data, ...args]);
+    parser[event]?.call(parser, ...args);
   }
 
   function emitNode(parser, event, data) {
@@ -353,21 +350,26 @@
     var truncated = false
       , originalLength = 0
       ;
-    truncateTextNode(parser);
     if (parser.textNode !== undefined) {
+      truncateTextNode(parser);
       if (parser.truncated) {
         truncated = true;
         originalLength = parser.truncateHeadLen + parser.truncatedChars + parser.truncateTailLen;
       } else {
         originalLength = parser.textNode.length;
       }
-    }
-    parser.textNode = textopts(parser.opt, parser.textNode);
-    if (parser.textNode !== undefined) {
+      parser.textNode = textopts(parser.opt, parser.textNode);
       emit(parser, (event ? event : "onvalue"), parser.textNode
-         , truncated, originalLength);
+          , truncated, originalLength);
+      parser.textNode = undefined;
+      if (truncated) {
+        // we reset the state about truncating the text node
+        parser.truncated = false;
+        parser.truncatedChars = 0;
+        parser.truncateHeadLen = 0;
+        parser.truncateTailLen = 0;
+      }
     }
-    clearBuffers(parser);
   }
 
   function closeNumber(parser) {

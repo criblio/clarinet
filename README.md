@@ -114,6 +114,7 @@ settings supported:
   maximum size other than `clarinet.MAX_BUFFER_LENGTH`.
 * `truncateMarker` - string. the marker placed in the middle of truncated
   strings. defaults to `...[TRUNCATED=<num-chars>]...`.
+* `MAX_BUFFER_LENGTH` - number. the maximum buffer length, overrides `clarinet.MAX_BUFFER_LENGTH`
 
 when the `truncate` option is enabled, string values (and keys) are emitted
 with two extra arguments: a boolean indicating whether the value was

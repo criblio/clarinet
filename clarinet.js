@@ -166,7 +166,15 @@
     }
   }
 
-  var stringTokenPattern = /[\\"\n]/g;
+  function stringEndOffset(str, i) {
+    for(; i<str.length; i++){
+      var c = str.charCodeAt(i);
+      if(c === Char.doubleQuote || c === Char.backslash || c === Char.lineFeed){
+        return i;
+      }
+    }
+    return -1;
+  }
 
   function CParser (opt) {
     if (!(this instanceof CParser)) return new CParser (opt);
@@ -655,16 +663,15 @@
               else continue;
             }
 
-            stringTokenPattern.lastIndex = i;
-            var reResult = stringTokenPattern.exec(chunk);
-            if (reResult === null) {
+            var strEnd = stringEndOffset(chunk, i);
+            if (strEnd < 0) {
               i = chunk.length+1;
               parser.textNode += chunk.substring(starti, i-1);
               parser.position += i - 1 - starti;
               break;
             }
-            i = reResult.index+1;
-            c = chunk.charCodeAt(reResult.index);
+            i = strEnd+1;
+            c = chunk.charCodeAt(strEnd);
             if (!c) {
               parser.textNode += chunk.substring(starti, i-1);
               parser.position += i - 1 - starti;

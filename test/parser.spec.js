@@ -208,46 +208,34 @@ describe("truncate option", () => {
   });
 
   it("truncates the middle of strings that reach the maximum size", () => {
-    // 120 chars; with truncate: 50 the head keeps 18 and the tail keeps 17
+    // 120 chars; with truncate: 50 the head keeps 16 and the tail keeps 15
     const str = "a".repeat(60) + "b".repeat(60);
     const [{ value, truncated, originalLength }] =
       parseValues({ truncate: 50 }, JSON.stringify([str]));
     assert.strictEqual(truncated, true);
-    assert.strictEqual(originalLength, 121);
+    assert.strictEqual(originalLength, 120);
     assert.strictEqual(value, str.substring(0, 16) + '...[TRUNCATED=89]...'
       + str.substring(105));
     assert.strictEqual(value.length, 51);
   });
 
-  it("truncates streamed strings once they reach the maximum buffer length", () => {
-    const originalMax = clarinet.MAX_BUFFER_LENGTH;
-    clarinet.MAX_BUFFER_LENGTH = 100;
-    try {
-      // 1000 chars; head keeps 43 and the tail keeps 42
-      const str = "x".repeat(1000);
-      const [{ value, truncated, originalLength }] =
-        parseValues({ truncate: true }, JSON.stringify([str]), 13);
-      assert.strictEqual(truncated, true);
-      assert.strictEqual(originalLength, 1000);
-      assert.strictEqual(value, str.substring(0, 41) + `...[TRUNCATED=919]...`
-        + str.substring(1000 - 40));
-      assert.strictEqual(value.length, 102);
-    } finally {
-      clarinet.MAX_BUFFER_LENGTH = originalMax;
-    }
+  it("truncates streamed strings once they reach the MAX_BUFFER_LENGTH", () => {
+    // 1000 chars; head keeps 43 and the tail keeps 42
+    const str = "x".repeat(1000);
+    const [{ value, truncated, originalLength }] =
+      parseValues({ truncate: true, MAX_BUFFER_LENGTH: 100 }, JSON.stringify([str]), 13);
+    assert.strictEqual(truncated, true);
+    assert.strictEqual(originalLength, 1000);
+    assert.strictEqual(value, str.substring(0, 41) + `...[TRUNCATED=919]...`
+      + str.substring(1000 - 40));
+    assert.strictEqual(value.length, 102);
   });
 
-  it("raises an error for oversized strings when the option is not set", () => {
-    const originalMax = clarinet.MAX_BUFFER_LENGTH;
-    clarinet.MAX_BUFFER_LENGTH = 100;
-    try {
-      assert.throws(
-        () => parseValues({}, JSON.stringify(["y".repeat(1000)]), 7),
-        /Max buffer length exceeded: textNode/
-      );
-    } finally {
-      clarinet.MAX_BUFFER_LENGTH = originalMax;
-    }
+  it("raises an error for oversized strings when truncate is not set", () => {
+    assert.throws(
+      () => parseValues({MAX_BUFFER_LENGTH: 100}, JSON.stringify(["y".repeat(1000)]), 7),
+      /Max buffer length exceeded: textNode/
+    );
   });
 
   it("supports a custom marker", () => {
@@ -268,7 +256,7 @@ describe("truncate option", () => {
     assert.deepStrictEqual(values.map((v) => v.truncated),
       [true, false, true]);
     assert.deepStrictEqual(values.map((v) => v.originalLength),
-      [121, 5, 202]);
+      [120, 5, 200]);
     assert.strictEqual(values[1].value, "short");
   });
 

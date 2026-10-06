@@ -238,6 +238,20 @@ describe("truncate option", () => {
     );
   });
 
+  it("parses numbers longer than NUMBER_MAX_BUFFER_LENGTH as Infinity", () => {
+    const longNumber = "1" + "0".repeat(400);
+    const [{ value }] =
+      parseValues({}, `[${longNumber}]`, 13);
+    assert.strictEqual(value, Infinity);
+  });
+
+  it("parses negative numbers longer than NUMBER_MAX_BUFFER_LENGTH as -Infinity", () => {
+    const longNumber = "-1" + "0".repeat(400);
+    const [{ value }] =
+      parseValues({}, `[${longNumber}]`, 13);
+    assert.strictEqual(value, -Infinity);
+  });
+
   it("supports a custom marker", () => {
     const str = "z".repeat(100);
     const [{ value, truncated, originalLength }] =

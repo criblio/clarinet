@@ -1,4 +1,10 @@
-;(function (clarinet) {
+;
+/**
+ * Defines the maximum length of a number node after which it is parsed as Infinity or -Infinity.
+ * @type {number}
+ */
+const NUMBER_MAX_BUFFER_LENGTH = 308;
+(function (clarinet) {
   "use strict";
 
   // non node-js needs to set clarinet debug on root
@@ -145,6 +151,11 @@
       var buffer = bufferNames[bufferIdx]
         , len = parser[buffer] === undefined ? 0 : parser[buffer].length
         ;
+      if (buffer === 'numberNode' && len > NUMBER_MAX_BUFFER_LENGTH) {
+        parser.numberNode = parser.numberNode.substring(0, NUMBER_MAX_BUFFER_LENGTH);
+        len = parser.numberNode.length;
+        continue;
+      }
       if (len > maxAllowed) {
         if (buffer === 'textNode' && parser.opt?.truncate) {
           truncateTextNode(parser);

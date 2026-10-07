@@ -1,9 +1,14 @@
 ;
 /**
- * Defines the maximum length of a number node after which it is parsed as Infinity or -Infinity.
+ * Defines the maximum length of a number node after which it does not impact the final result.
+ * Following cases are considered:
+ *  - real long string of digits with no decimal point which will be parsed as Infinity or -Infinity
+ *  - real long string of digits after decimal point which will be rounded to the nearest number
+ *  - real long string of digits after positive exponent which will be parsed as Infinity or -Infinity
+ *  - real long string of digits after negative exponent which will be parsed as 0
  * @type {number}
  */
-const NUMBER_MAX_BUFFER_LENGTH = 308;
+const NUMBER_MAX_BUFFER_LENGTH = 320;
 (function (clarinet) {
   "use strict";
 
@@ -145,29 +150,20 @@ const NUMBER_MAX_BUFFER_LENGTH = 308;
 
   function checkBufferLength (parser) {
     var maxAllowed = getMaxBufferLength(parser)
-      , maxActual = 0
+        , maxActual = 0
+        , len = parser.textNode === undefined ? 0 : parser.textNode.length
       ;
-    for (var bufferIdx in bufferNames) {
-      var buffer = bufferNames[bufferIdx]
-        , len = parser[buffer] === undefined ? 0 : parser[buffer].length
-        ;
-      if (buffer === 'numberNode' && len > NUMBER_MAX_BUFFER_LENGTH) {
-        parser.numberNode = parser.numberNode.substring(0, NUMBER_MAX_BUFFER_LENGTH);
-        len = parser.numberNode.length;
-        continue;
+    if (len > maxAllowed) {
+      if (parser.opt?.truncate) {
+        truncateTextNode(parser);
+        // the truncation option is enabled, so the string was truncated
+        // down to the maximum size instead of raising an error
+        len = parser.textNode === undefined ? 0 : parser.textNode.length;
+      } else {
+        error(parser, "Max buffer length exceeded: textNode");
       }
-      if (len > maxAllowed) {
-        if (buffer === 'textNode' && parser.opt?.truncate) {
-          truncateTextNode(parser);
-          // the truncation option is enabled, so the string was truncated
-          // down to the maximum size instead of raising an error
-          len = parser.textNode === undefined ? 0 : parser.textNode.length;
-        } else {
-          error(parser, "Max buffer length exceeded: "+ buffer);
-        }
-      }
-      maxActual = Math.max(maxActual, len);
     }
+    maxActual = Math.max(maxActual, len);
     parser.bufferCheckPosition = (maxAllowed - maxActual) + parser.position;
   }
 
@@ -757,8 +753,11 @@ const NUMBER_MAX_BUFFER_LENGTH = 308;
         continue;
 
         case S.NUMBER_DIGIT:
-          if(Char._0 <= c && c <= Char._9) parser.numberNode += String.fromCharCode(c);
-          else if (c === Char.period) {
+          if(Char._0 <= c && c <= Char._9) {
+            if (parser.numberNode.length <= NUMBER_MAX_BUFFER_LENGTH) {
+              parser.numberNode += String.fromCharCode(c);
+            }
+          } else if (c === Char.period) {
             if(parser.numberNode.indexOf('.')!==-1)
               error(parser, 'Invalid number has two dots');
             parser.numberNode += ".";

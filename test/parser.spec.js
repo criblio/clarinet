@@ -238,15 +238,36 @@ describe("truncate option", () => {
     );
   });
 
+  it("parses numbers longer than NUMBER_MAX_BUFFER_LENGTH as a rounded value", () => {
+    const longNumber = "1." + "1".repeat(420);
+    const [{ value }] =
+        parseValues({}, `[${longNumber}]`, 13);
+    assert.strictEqual(value, 1.1111111111111112);
+  });
+
+  it("parses exponential notation (e+) numbers longer than NUMBER_MAX_BUFFER_LENGTH as Infinity", () => {
+    const longNumber = "1e+" + "1".repeat(420);
+    const [{ value }] =
+        parseValues({}, `[${longNumber}]`, 13);
+    assert.strictEqual(value, Infinity);
+  });
+
+  it("parses exponential notation (e-) numbers longer than NUMBER_MAX_BUFFER_LENGTH as 0", () => {
+    const longNumber = "1e-" + "1".repeat(420);
+    const [{ value }] =
+        parseValues({}, `[${longNumber}]`, 13);
+    assert.strictEqual(value, 0);
+  });
+
   it("parses numbers longer than NUMBER_MAX_BUFFER_LENGTH as Infinity", () => {
-    const longNumber = "1" + "0".repeat(400);
+    const longNumber = "1" + "0".repeat(420);
     const [{ value }] =
       parseValues({}, `[${longNumber}]`, 13);
     assert.strictEqual(value, Infinity);
   });
 
   it("parses negative numbers longer than NUMBER_MAX_BUFFER_LENGTH as -Infinity", () => {
-    const longNumber = "-1" + "0".repeat(400);
+    const longNumber = "-1" + "0".repeat(420);
     const [{ value }] =
       parseValues({}, `[${longNumber}]`, 13);
     assert.strictEqual(value, -Infinity);

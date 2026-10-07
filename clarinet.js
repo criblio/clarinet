@@ -1,4 +1,15 @@
-;(function (clarinet) {
+;
+/**
+ * Defines the maximum length of a number node after which it does not impact the final result.
+ * Following cases are considered:
+ *  - real long string of digits with no decimal point which will be parsed as Infinity or -Infinity
+ *  - real long string of digits after decimal point which will be rounded to the nearest number
+ *  - real long string of digits after positive exponent which will be parsed as Infinity or -Infinity
+ *  - real long string of digits after negative exponent which will be parsed as 0
+ * @type {number}
+ */
+const NUMBER_MAX_BUFFER_LENGTH = 320;
+(function (clarinet) {
   "use strict";
 
   // non node-js needs to set clarinet debug on root
@@ -30,8 +41,9 @@
 
   var buffers     = {
         textNode: undefined,
-        numberNode: ""
+        numberNode: "",
     }
+    , bufferNames = ["textNode", "numberNode"]
     , streamWraps = clarinet.EVENTS.filter(function (ev) {
           return ev !== "error" && ev !== "end";
         })
@@ -131,19 +143,28 @@
     };
   }
 
+  function getMaxBufferLength(parser) {
+    return truncateMax(parser) ||
+           Math.max(parser.opt.MAX_BUFFER_LENGTH || clarinet.MAX_BUFFER_LENGTH, 10);
+  }
+
   function checkBufferLength (parser) {
-    var maxAllowed = Math.max(clarinet.MAX_BUFFER_LENGTH, 10)
-      , maxActual = 0
+    var maxAllowed = getMaxBufferLength(parser)
+        , maxActual = 0
+        , len = parser.textNode === undefined ? 0 : parser.textNode.length
       ;
-    for (var buffer in buffers) {
-      var len = parser[buffer] === undefined ? 0 : parser[buffer].length;
-      if (len > maxAllowed) {
-        error(parser, "Max buffer length exceeded: "+ buffer);
+    if (len > maxAllowed) {
+      if (parser.opt?.truncate) {
+        truncateTextNode(parser);
+        // the truncation option is enabled, so the string was truncated
+        // down to the maximum size instead of raising an error
+        len = parser.textNode === undefined ? 0 : parser.textNode.length;
+      } else {
+        error(parser, "Max buffer length exceeded: textNode");
       }
-      maxActual = Math.max(maxActual, len);
     }
-    parser.bufferCheckPosition = (clarinet.MAX_BUFFER_LENGTH - maxActual)
-                               + parser.position;
+    maxActual = Math.max(maxActual, len);
+    parser.bufferCheckPosition = (maxAllowed - maxActual) + parser.position;
   }
 
   function clearBuffers (parser) {
@@ -152,16 +173,24 @@
     }
   }
 
-  var stringTokenPattern = /[\\"\n]/g;
+  function stringEndOffset(str, i) {
+    for(; i<str.length; i++){
+      var c = str.charCodeAt(i);
+      if(c === Char.doubleQuote || c === Char.backslash || c === Char.lineFeed){
+        return i;
+      }
+    }
+    return -1;
+  }
 
   function CParser (opt) {
     if (!(this instanceof CParser)) return new CParser (opt);
 
     var parser = this;
     clearBuffers(parser);
-    parser.bufferCheckPosition = clarinet.MAX_BUFFER_LENGTH;
     parser.q        = parser.c = parser.p = "";
     parser.opt      = opt || {};
+    parser.bufferCheckPosition = getMaxBufferLength(parser);
     parser.closed   = parser.closedRoot = parser.sawRoot = false;
     parser.tag      = parser.error = null;
     parser.state    = S.BEGIN;
@@ -173,6 +202,8 @@
     parser.unicodeI = 0;
     parser.unicodeS = null;
     parser.depth    = 0;
+    parser.truncated = false;       // is the current textNode truncated?
+    parser.truncatedChars = 0;      // how many chars were dropped so far
     emit(parser, "onready");
   }
 
@@ -198,7 +229,7 @@
     //var Buffer = this.Buffer || function Buffer () {}; // if we don't have Buffers, fake it so we can do `var instanceof Buffer` and not throw an error
     this.bytes_remaining = 0; // number of bytes remaining in multi byte utf8 char to read after split boundary
     this.bytes_in_sequence = 0; // bytes in multi byte utf8 char to read
-    this.temp_buffs = { "2": new Buffer(2), "3": new Buffer(3), "4": new Buffer(4) }; // for rebuilding chars split before boundary is reached
+    this.temp_buffs = { "2": Buffer.alloc(2), "3": Buffer.alloc(3), "4": Buffer.alloc(4) }; // for rebuilding chars split before boundary is reached
     this.string = '';
 
     var me = this;
@@ -231,7 +262,7 @@
     { constructor: { value: CStream } });
 
   CStream.prototype.write = function (data) {
-    data = new Buffer(data);
+    data = Buffer.from(data);
     for (var i = 0; i < data.length; i++) {
       var n = data[i];
 
@@ -315,9 +346,10 @@
     this.emit("close");
   };
 
-  function emit(parser, event, data) {
+  function emit(parser, event, ...args) {
     if(clarinet.INFO) console.log('-- emit', event, data);
-    if (parser[event]) parser[event](data);
+    // make sure to pass all the extra args passed in
+    parser[event]?.call(parser, ...args);
   }
 
   function emitNode(parser, event, data) {
@@ -325,12 +357,34 @@
     emit(parser, event, data);
   }
 
+  function getTruncateMarker(parser){
+    return `...[TRUNCATED=${parser.truncatedChars}]...`
+  }
+
   function closeValue(parser, event) {
-    parser.textNode = textopts(parser.opt, parser.textNode);
+    var truncated = false
+      , originalLength = 0
+      ;
     if (parser.textNode !== undefined) {
-      emit(parser, (event ? event : "onvalue"), parser.textNode);
+      truncateTextNode(parser);
+      if (parser.truncated) {
+        truncated = true;
+        originalLength = parser.truncateHeadLen + parser.truncatedChars + parser.truncateTailLen;
+      } else {
+        originalLength = parser.textNode.length;
+      }
+      parser.textNode = textopts(parser.opt, parser.textNode);
+      emit(parser, (event ? event : "onvalue"), parser.textNode
+          , truncated, originalLength);
+      parser.textNode = undefined;
+      if (truncated) {
+        // we reset the state about truncating the text node
+        parser.truncated = false;
+        parser.truncatedChars = 0;
+        parser.truncateHeadLen = 0;
+        parser.truncateTailLen = 0;
+      }
     }
-    parser.textNode = undefined;
   }
 
   function closeNumber(parser) {
@@ -346,6 +400,50 @@
     if (opt.trim) text = text.trim();
     if (opt.normalize) text = text.replace(/\s+/g, " ");
     return text;
+  }
+
+  // the maximum string length when the truncate option is enabled.
+  // returns 0 (falsy) when the option is not enabled.
+  function truncateMax (parser) {
+    if (!parser.opt?.truncate) return 0;
+    if (parser.opt?.truncate === true) return  Math.max(parser.opt.MAX_BUFFER_LENGTH || clarinet.MAX_BUFFER_LENGTH, 10);
+    return parser.opt.truncate;
+  }
+
+  // Truncates the middle of the current textNode once it reaches the
+  // maximum size, preserving both its beginning and its ending, e.g.
+  //   "somelong...TRUNC[<remove-chars>]...string"
+  // When a string is truncated across multiple writes the head stays
+  // fixed while the tail keeps sliding forward; every dropped character
+  // is accounted for in parser.truncatedChars so that the original length
+  // can still be reported when the value is emitted.
+  function truncateTextNode (parser) {
+    var max = truncateMax(parser);
+    if (!max || parser.textNode === undefined || parser.textNode.length <= max) return; // noop
+
+    var marker   = parser.opt.truncateMarker || getTruncateMarker(parser)
+      , markerLen = marker.length
+      , available = Math.max(max - markerLen, 2)
+      ;
+    
+    if (parser.truncated) {
+      // textNode is currently head + marker + tail (+ text appended since
+      // the last truncation). Trim some from the middle again
+      var rest = parser.textNode.substring(parser.truncateHeadLen + markerLen);
+      parser.truncatedChars += rest.length - parser.truncateTailLen;
+    } else {
+      var headLen = Math.ceil(available/2), tailLen = available - headLen;
+      parser.truncateHeadLen = headLen;
+      parser.truncateTailLen = tailLen;
+      parser.truncatedChars = parser.textNode.length - headLen - tailLen;
+    }
+
+    // get marker one more time to update the truncated chars - this leads to the length being off by a few chars, but 
+    marker = parser.opt.truncateMarker || getTruncateMarker(parser);
+    parser.textNode = parser.textNode.substring(0, parser.truncateHeadLen)
+                    + marker
+                    + parser.textNode.substring(parser.textNode.length - parser.truncateTailLen);
+    parser.truncated = true;
   }
 
   function error (parser, er) {
@@ -572,16 +670,15 @@
               else continue;
             }
 
-            stringTokenPattern.lastIndex = i;
-            var reResult = stringTokenPattern.exec(chunk);
-            if (reResult === null) {
+            var strEnd = stringEndOffset(chunk, i);
+            if (strEnd < 0) {
               i = chunk.length+1;
               parser.textNode += chunk.substring(starti, i-1);
               parser.position += i - 1 - starti;
               break;
             }
-            i = reResult.index+1;
-            c = chunk.charCodeAt(reResult.index);
+            i = strEnd+1;
+            c = chunk.charCodeAt(strEnd);
             if (!c) {
               parser.textNode += chunk.substring(starti, i-1);
               parser.position += i - 1 - starti;
@@ -656,8 +753,11 @@
         continue;
 
         case S.NUMBER_DIGIT:
-          if(Char._0 <= c && c <= Char._9) parser.numberNode += String.fromCharCode(c);
-          else if (c === Char.period) {
+          if(Char._0 <= c && c <= Char._9) {
+            if (parser.numberNode.length <= NUMBER_MAX_BUFFER_LENGTH) {
+              parser.numberNode += String.fromCharCode(c);
+            }
+          } else if (c === Char.period) {
             if(parser.numberNode.indexOf('.')!==-1)
               error(parser, 'Invalid number has two dots');
             parser.numberNode += ".";

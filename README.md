@@ -106,6 +106,27 @@ settings supported:
 * `trim` - boolean. whether or not to trim text and comment nodes.
 * `normalize` - boolean. if true, then turn any whitespace into a single
   space.
+* `truncate` - boolean or number. when a string reaches the maximum size
+  (by default `clarinet.MAX_BUFFER_LENGTH`, 64kb), truncate it in the
+  middle instead of raising a `Max buffer length exceeded` error. the
+  beginning and the ending of the string are preserved and joined by a
+  marker, e.g. `"somelong...[TRUNCATED=<num-chars>]...string"`. pass a number to use a
+  maximum size other than `clarinet.MAX_BUFFER_LENGTH`.
+* `truncateMarker` - string. the marker placed in the middle of truncated
+  strings. defaults to `...[TRUNCATED=<num-chars>]...`.
+* `MAX_BUFFER_LENGTH` - number. the maximum buffer length, overrides `clarinet.MAX_BUFFER_LENGTH`
+
+when the `truncate` option is enabled, string values (and keys) are emitted
+with two extra arguments: a boolean indicating whether the value was
+truncated, and the original length of the string before truncation, e.g.
+
+``` js
+parser.onvalue = function (v, truncated, originalLength) {
+  // v: "somelong...TRUNCATED...string"
+  // truncated: true
+  // originalLength: 91234
+};
+```
 
 ## methods
 
@@ -149,11 +170,16 @@ out on `parser.error`, and must be deleted before parsing can continue. by
 listening to this event, you can keep an eye on that kind of stuff. note:
 this happens *much* more in strict mode. argument: instance of `Error`.
 
-`value` - a json value. argument: value, can be a bool, null, string on number
+`value` - a json value. argument: value, can be a bool, null, string on
+number. string values are emitted with two additional arguments:
+`truncated` (boolean) and `originalLength` (number), see the `truncate`
+option above.
 
 `openobject` - object was opened. argument: key, a string with the first key of the object (if any)
 
-`key` - an object key: argument: key, a string with the current key. Not called for first key (use `openobject` for that).
+`key` - an object key: argument: key, a string with the current key. Not
+called for first key (use `openobject` for that). keys are emitted with the
+same `truncated` and `originalLength` arguments as string values.
 
 `closeobject` - indication that an object was closed
 

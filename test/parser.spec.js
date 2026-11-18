@@ -307,4 +307,99 @@ describe("truncate option", () => {
     assert.deepStrictEqual(keys,
       [{ key: "a", truncated: false, originalLength: 1 }]);
   });
+
+  it("emits the same value whatever the chunk size the string arrives in", () => {
+    // The truncated value is retained split apart (head + sliding tail) and
+    // only composed when the value closes, so the number of writes the
+    // string spans must not be observable in what is emitted.
+    const str = "a".repeat(500) + "b".repeat(500) + "c".repeat(500);
+    const json = JSON.stringify([str]);
+    const single = parseValues({ truncate: 200 }, json);
+    for (const chunkSize of [1, 7, 13, 64, 199, 200, 201, 512, 1024]) {
+      assert.deepStrictEqual(parseValues({ truncate: 200 }, json, chunkSize),
+        single, `chunk size ${chunkSize} disagrees with a single write`);
+    }
+    const [{ value, truncated, originalLength }] = single;
+    assert.strictEqual(truncated, true);
+    assert.strictEqual(originalLength, 1500);
+    assert.strictEqual(value, str.substring(0, 91)
+      + "...[TRUNCATED=1319]..." + str.substring(1500 - 90));
+  });
+
+  it("still extracts a sibling field after an oversized string", () => {
+    const p = parser({ truncate: 100 });
+    const pairs = [];
+    let key;
+    // the first key of an object is delivered with onopenobject
+    p.onopenobject = (k) => { key = k; };
+    p.onkey = (k) => { key = k; };
+    p.onvalue = (value, truncated) => { pairs.push({ key, value, truncated }); };
+    p.onerror = (e) => { throw e; };
+    const json = JSON.stringify({ blob: "x".repeat(10000), cursor: "ok" });
+    for (let i = 0; i < json.length; i += 16) {
+      p.write(json.substring(i, i + 16));
+    }
+    p.close();
+    assert.deepStrictEqual(pairs.map((pair) => pair.key), ["blob", "cursor"]);
+    assert.strictEqual(pairs[0].truncated, true);
+    assert.deepStrictEqual(pairs[1], { key: "cursor", value: "ok", truncated: false });
+  });
+
+  it("keeps the truncation cost independent of the chunk size", () => {
+    // Regression guard for CRIBL-46514: truncateTextNode used to rebuild the
+    // whole capped value on every write once the cap was passed, so the cost
+    // tracked the number of writes rather than the size of the input -- a
+    // 24 MiB string took ~5.8s in 8 KiB chunks against ~41ms in one write.
+    //
+    // Counting the truncation work rather than timing it keeps this
+    // assertion deterministic and machine-independent: parser.truncatedChars
+    // advances exactly once per truncation pass, so the number of times it
+    // moves is the number of cap-sized copies the old code would have made.
+    const cap = 1 << 10;
+    const json = `{"blob":"${"a".repeat(64 << 10)}","cursor":"ok"}`;
+
+    const passesAtChunkSize = (chunkSize) => {
+      const p = parser({ truncate: cap });
+      let cursor;
+      let key;
+      p.onkey = (k) => { key = k; };
+      p.onvalue = (value) => { if (key === "cursor") cursor = value; };
+      p.onerror = (e) => { throw e; };
+      let passes = 0;
+      let writes = 0;
+      let seen = 0;
+      for (let i = 0; i < json.length; i += chunkSize) {
+        p.write(json.substring(i, i + chunkSize));
+        writes++;
+        // only count increases: closeValue resets the counter to 0
+        if (p.truncatedChars > seen) passes++;
+        seen = p.truncatedChars;
+      }
+      p.close();
+      // the point of truncating in the first place
+      assert.strictEqual(cursor, "ok");
+      return { passes, writes };
+    };
+
+    const small = passesAtChunkSize(1 << 6);   //   64 byte chunks
+    const large = passesAtChunkSize(1 << 12);  // 4096 byte chunks
+
+    // A slide is re-armed a bit under a cap further along the input, so the
+    // number of passes is bounded by the input size over the cap however the
+    // input is chopped up. The bound is generous (4x) because the re-arm
+    // distance is cap - tailLen rather than a full cap, and a check only
+    // happens at the end of a write; what matters is that it is a function
+    // of the input alone. Before the fix every write past the cap bought one
+    // full rebuild, so passes was the write count: that is 1009 here at 64
+    // byte chunks, well over the bound, and it grew as chunks got smaller.
+    const maxPasses = 4 * Math.ceil(json.length / cap);
+    assert.ok(small.writes > 20 * large.writes,
+      "the two chunk sizes should differ by a large factor of writes");
+    for (const [label, run] of [["64 byte", small], ["4096 byte", large]]) {
+      assert.ok(run.passes <= maxPasses,
+        `truncation work tracks the write count rather than the input size: `
+        + `${run.passes} passes in ${run.writes} writes at ${label} chunks, `
+        + `expected at most ${maxPasses} for this input`);
+    }
+  });
 });

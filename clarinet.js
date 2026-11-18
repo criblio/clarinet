@@ -150,21 +150,25 @@ const NUMBER_MAX_BUFFER_LENGTH = 320;
 
   function checkBufferLength (parser) {
     var maxAllowed = getMaxBufferLength(parser)
-        , maxActual = 0
         , len = parser.textNode === undefined ? 0 : parser.textNode.length
       ;
-    if (len > maxAllowed) {
-      if (parser.opt?.truncate) {
+    if (parser.opt?.truncate) {
+      // Once the node has been truncated textNode only retains the sliding
+      // tail, so its length alone no longer tells us whether the value is
+      // over the cap: slide it back down on every check instead. A slide
+      // copies at most the tail and re-arms the next check a full
+      // maxAllowed - tailLen further on, which keeps the amortized cost
+      // proportional to the input size instead of the number of writes.
+      if (parser.truncated || len > maxAllowed) {
         truncateTextNode(parser);
         // the truncation option is enabled, so the string was truncated
         // down to the maximum size instead of raising an error
         len = parser.textNode === undefined ? 0 : parser.textNode.length;
-      } else {
-        error(parser, "Max buffer length exceeded: textNode");
       }
+    } else if (len > maxAllowed) {
+      error(parser, "Max buffer length exceeded: textNode");
     }
-    maxActual = Math.max(maxActual, len);
-    parser.bufferCheckPosition = (maxAllowed - maxActual) + parser.position;
+    parser.bufferCheckPosition = (maxAllowed - len) + parser.position;
   }
 
   function clearBuffers (parser) {
@@ -204,6 +208,9 @@ const NUMBER_MAX_BUFFER_LENGTH = 320;
     parser.depth    = 0;
     parser.truncated = false;       // is the current textNode truncated?
     parser.truncatedChars = 0;      // how many chars were dropped so far
+    parser.truncateHead = undefined;// retained head, copied out once
+    parser.truncateHeadLen = 0;     // length of the retained head
+    parser.truncateTailLen = 0;     // length of the sliding tail window
     emit(parser, "onready");
   }
 
@@ -366,10 +373,16 @@ const NUMBER_MAX_BUFFER_LENGTH = 320;
       , originalLength = 0
       ;
     if (parser.textNode !== undefined) {
+      // slides the tail one last time, or truncates for the first time when
+      // the whole value arrived within a single write
       truncateTextNode(parser);
       if (parser.truncated) {
         truncated = true;
         originalLength = parser.truncateHeadLen + parser.truncatedChars + parser.truncateTailLen;
+        // the retained value is only materialized here, once per value
+        parser.textNode = parser.truncateHead
+                        + (parser.opt.truncateMarker || getTruncateMarker(parser))
+                        + parser.textNode;
       } else {
         originalLength = parser.textNode.length;
       }
@@ -381,6 +394,7 @@ const NUMBER_MAX_BUFFER_LENGTH = 320;
         // we reset the state about truncating the text node
         parser.truncated = false;
         parser.truncatedChars = 0;
+        parser.truncateHead = undefined;
         parser.truncateHeadLen = 0;
         parser.truncateTailLen = 0;
       }
@@ -413,37 +427,47 @@ const NUMBER_MAX_BUFFER_LENGTH = 320;
   // Truncates the middle of the current textNode once it reaches the
   // maximum size, preserving both its beginning and its ending, e.g.
   //   "somelong...TRUNC[<remove-chars>]...string"
-  // When a string is truncated across multiple writes the head stays
-  // fixed while the tail keeps sliding forward; every dropped character
-  // is accounted for in parser.truncatedChars so that the original length
-  // can still be reported when the value is emitted.
+  //
+  // The truncated value is kept split apart rather than materialized: the
+  // head is copied out to parser.truncateHead exactly once, and textNode
+  // retains nothing but the sliding tail, which the string state machine
+  // keeps appending to. Sliding the tail forward therefore costs one tail
+  // copy instead of a rebuild of the whole capped value, and the marker is
+  // composed a single time, when the value closes (see closeValue).
+  // Every dropped character is accounted for in parser.truncatedChars so
+  // that the original length can still be reported when the value is
+  // emitted.
   function truncateTextNode (parser) {
     var max = truncateMax(parser);
-    if (!max || parser.textNode === undefined || parser.textNode.length <= max) return; // noop
+    if (!max || parser.textNode === undefined) return; // noop
 
-    var marker   = parser.opt.truncateMarker || getTruncateMarker(parser)
-      , markerLen = marker.length
-      , available = Math.max(max - markerLen, 2)
-      ;
-    
-    if (parser.truncated) {
-      // textNode is currently head + marker + tail (+ text appended since
-      // the last truncation). Trim some from the middle again
-      var rest = parser.textNode.substring(parser.truncateHeadLen + markerLen);
-      parser.truncatedChars += rest.length - parser.truncateTailLen;
-    } else {
-      var headLen = Math.ceil(available/2), tailLen = available - headLen;
+    if (!parser.truncated) {
+      if (parser.textNode.length <= max) return; // noop, still under the cap
+
+      // First truncation: fix the head and the tail window for this value.
+      // The marker is sized from the current (zero) truncatedChars, so the
+      // final value can end up a few characters over the cap once the real
+      // count is rendered in. That drift predates this representation.
+      var marker    = parser.opt.truncateMarker || getTruncateMarker(parser)
+        , available = Math.max(max - marker.length, 2)
+        , headLen   = Math.ceil(available/2)
+        , tailLen   = available - headLen
+        ;
+      parser.truncateHead    = parser.textNode.substring(0, headLen);
       parser.truncateHeadLen = headLen;
       parser.truncateTailLen = tailLen;
-      parser.truncatedChars = parser.textNode.length - headLen - tailLen;
+      parser.truncatedChars  = parser.textNode.length - headLen - tailLen;
+      parser.textNode        = parser.textNode.substring(parser.textNode.length - tailLen);
+      parser.truncated       = true;
+      return;
     }
 
-    // get marker one more time to update the truncated chars - this leads to the length being off by a few chars, but 
-    marker = parser.opt.truncateMarker || getTruncateMarker(parser);
-    parser.textNode = parser.textNode.substring(0, parser.truncateHeadLen)
-                    + marker
-                    + parser.textNode.substring(parser.textNode.length - parser.truncateTailLen);
-    parser.truncated = true;
+    // Already truncated: textNode holds the tail window plus whatever has
+    // been appended since the last slide. Drop the excess off its front.
+    var excess = parser.textNode.length - parser.truncateTailLen;
+    if (excess <= 0) return; // noop
+    parser.truncatedChars += excess;
+    parser.textNode = parser.textNode.substring(excess);
   }
 
   function error (parser, er) {
